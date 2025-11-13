@@ -38,7 +38,64 @@
     return container;
   }
 
-  const contentNode = getMainContentNode();
+  // NEW: strip obvious ad elements and "ADVERTISEMENT" blocks
+  function cleanContentNode(root) {
+    if (!root) return root;
+
+    const adSelectors = [
+      // IDs that look like ad containers
+      '[id^="ad-"]',
+      '[id$="-ad"]',
+      '[id^="ad_"]',
+      '[id$="_ad"]',
+      '[id*="advert"]',
+      '[id*="sponsor"]',
+
+      // Classes that look like ad containers
+      '[class~="ad"]',
+      '[class*="ad-"]',
+      '[class*="-ad"]',
+      '[class*="advert"]',
+      '[class*="sponsor"]',
+
+      // Common ad container attributes
+      '[data-ad]',
+      '[data-ad-slot]',
+      '[data-ad-client]',
+      '[data-testid*="ad"]',
+
+      // Things we never need in reader mode
+      'iframe',
+      'script',
+      'style'
+    ];
+
+    root.querySelectorAll(adSelectors.join(",")).forEach((el) => {
+      el.remove();
+    });
+
+    // Remove standalone "ADVERTISEMENT", "Sponsored" blocks, etc.
+    const textAdCandidates = root.querySelectorAll("p, div, span");
+    textAdCandidates.forEach((el) => {
+      if (el.children.length > 0) return;
+      const t = (el.textContent || "").trim().toLowerCase();
+      const adWords = [
+        "advertisement",
+        "advertisements",
+        "sponsored",
+        "sponsored content",
+        "ad"
+      ];
+      if (adWords.includes(t)) {
+        el.remove();
+      }
+    });
+
+    return root;
+  }
+
+  // Get and clean article content
+  const contentNode = cleanContentNode(getMainContentNode());
 
   // Create overlay
   const overlay = document.createElement("div");
