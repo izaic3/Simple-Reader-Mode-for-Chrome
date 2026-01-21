@@ -10,14 +10,47 @@
   // Try to get main content of page
   function getMainContentNode() {
     // 1. Prefer <article>
-    let article = document.querySelector("article");
+    const article = document.querySelector("article");
     if (article) return article.cloneNode(true);
 
     // 2. Then <main>
-    let main = document.querySelector("main");
+    const main = document.querySelector("main");
     if (main) return main.cloneNode(true);
 
-    // 3. Fallback: collect paragraphs & headings from body
+    // 3. Score common content containers by text density
+    const containerSelectors = [
+      "[role='main']",
+      "#content",
+      ".content",
+      "#article",
+      ".article",
+      ".post",
+      ".entry",
+      "section",
+      "div"
+    ];
+
+    const scored = Array.from(document.querySelectorAll(containerSelectors.join(",")))
+      .map((el) => {
+        const text = (el.innerText || "").trim();
+        const length = text.length;
+        const pCount = el.querySelectorAll("p").length;
+        const headingCount = el.querySelectorAll("h1, h2, h3, h4").length;
+        const linkText = Array.from(el.querySelectorAll("a"))
+          .map((a) => a.innerText || "")
+          .join(" ").length;
+        const linkDensity = length > 0 ? linkText / length : 0;
+        const score = length + pCount * 200 + headingCount * 150 - linkDensity * 1000;
+        return { el, score, length };
+      })
+      .filter((entry) => entry.length > 200)
+      .sort((a, b) => b.score - a.score);
+
+    if (scored.length > 0) {
+      return scored[0].el.cloneNode(true);
+    }
+
+    // 4. Fallback: collect paragraphs & headings from body
     const container = document.createElement("div");
     const candidates = document.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
 
@@ -84,9 +117,21 @@
         "advertisements",
         "sponsored",
         "sponsored content",
-        "ad"
+        "paid content",
+        "promoted"
       ];
       if (adWords.includes(t)) {
+        el.remove();
+      }
+    });
+
+    // Remove lightweight ad shells near the reader content
+    const adShells = root.querySelectorAll("aside, section, div");
+    adShells.forEach((el) => {
+      const text = (el.textContent || "").toLowerCase();
+      if (text.length > 80) return;
+      const hasAdKeyword = /(ad\s*choices|sponsored|promoted|advertisement)/i.test(text);
+      if (hasAdKeyword) {
         el.remove();
       }
     });
@@ -269,6 +314,37 @@
       opacity: 0.85;
       padding-left: 0.8em;
       margin-left: 0;
+    }
+
+    .reader-content pre {
+      background: rgba(0, 0, 0, 0.06);
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-size: 0.92em;
+    }
+
+    #reader-mode-overlay.reader-theme-dark .reader-content pre {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .reader-content code {
+      font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.92em;
+      background: rgba(0, 0, 0, 0.06);
+      padding: 0 4px;
+      border-radius: 6px;
+    }
+
+    #reader-mode-overlay.reader-theme-dark .reader-content code {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .reader-content figcaption {
+      font-size: 0.9em;
+      opacity: 0.75;
+      margin-top: -6px;
+      text-align: center;
     }
 
     .reader-content table {
