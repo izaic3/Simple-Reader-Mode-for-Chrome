@@ -154,6 +154,11 @@
         <button class="reader-btn reader-theme-btn" data-theme="light">Light</button>
         <button class="reader-btn reader-theme-btn" data-theme="sepia">Sepia</button>
         <button class="reader-btn reader-theme-btn" data-theme="dark">Dark</button>
+        <label class="reader-wpm-wrap">
+          WPM
+          <input class="reader-wpm-input" type="number" min="60" max="1200" step="10" value="250" />
+        </label>
+        <button class="reader-btn reader-speed-toggle" aria-pressed="false">Speed Read: Off</button>
       </div>
       <div class="reader-right">
         <button class="reader-btn reader-font-btn" data-size="smaller">A-</button>
@@ -187,16 +192,19 @@
     #reader-mode-overlay.reader-theme-light {
       background-color: #f5f5f5;
       color: #111111;
+      --reader-muted-text: #757575;
     }
 
     #reader-mode-overlay.reader-theme-sepia {
       background-color: #f4ecd8;
       color: #3b2f26;
+      --reader-muted-text: #7b6c59;
     }
 
     #reader-mode-overlay.reader-theme-dark {
       background-color: #181a1b;
       color: #e4e4e4;
+      --reader-muted-text: #8a8f94;
     }
 
     .reader-toolbar {
@@ -244,8 +252,38 @@
       background: rgba(0,0,0,0.12);
     }
 
+    .reader-btn[aria-pressed="true"] {
+      background: rgba(0, 0, 0, 0.22);
+      font-weight: 600;
+    }
+
     #reader-mode-overlay.reader-theme-dark .reader-btn:hover {
       background: rgba(255,255,255,0.18);
+    }
+
+    #reader-mode-overlay.reader-theme-dark .reader-btn[aria-pressed="true"] {
+      background: rgba(255,255,255,0.28);
+    }
+
+    .reader-wpm-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    .reader-wpm-input {
+      width: 84px;
+      border: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 13px;
+      background: rgba(0,0,0,0.05);
+      color: inherit;
+    }
+
+    #reader-mode-overlay.reader-theme-dark .reader-wpm-input {
+      background: rgba(255,255,255,0.08);
     }
 
     .reader-close-btn {
@@ -347,6 +385,16 @@
       text-align: center;
     }
 
+    .reader-content.reader-speed-reading-active .reader-speed-word {
+      color: var(--reader-muted-text);
+      font-weight: 400;
+    }
+
+    .reader-content.reader-speed-reading-active .reader-speed-word.reader-speed-current {
+      color: #000000;
+      font-weight: 700;
+    }
+
     .reader-content table {
       border-collapse: collapse;
       width: 100%;
@@ -379,20 +427,142 @@
   overlay.prepend(style);
 
   // Append extracted content
-  overlay.querySelector(".reader-content").appendChild(contentNode);
+  const contentElement = overlay.querySelector(".reader-content");
+  const contentWrapper = overlay.querySelector(".reader-content-wrapper");
+  const wpmInput = overlay.querySelector(".reader-wpm-input");
+  const speedToggleBtn = overlay.querySelector(".reader-speed-toggle");
+  contentElement.appendChild(contentNode);
 
   // Add to document
   document.body.appendChild(overlay);
 
   // Font size state
   let fontSize = 18;
+  let speedReadingEnabled = false;
+  let speedWords = [];
+  let currentWordIndex = 0;
+  let speedTimer = null;
 
   function updateFontSize() {
-    overlay.querySelector(".reader-content").style.setProperty(
+    contentElement.style.setProperty(
       "--reader-font-size",
       fontSize + "px"
     );
   }
+
+  function stopSpeedReading() {
+    if (speedTimer) {
+      clearInterval(speedTimer);
+      speedTimer = null;
+    }
+    speedReadingEnabled = false;
+    contentElement.classList.remove("reader-speed-reading-active");
+    speedWords.forEach((word) => word.classList.remove("reader-speed-current"));
+    speedToggleBtn.textContent = "Speed Read: Off";
+    speedToggleBtn.setAttribute("aria-pressed", "false");
+  }
+
+  function scrollCurrentWordToTop(currentWord) {
+    const currentWordRect = currentWord.getBoundingClientRect();
+    const wrapperRect = contentWrapper.getBoundingClientRect();
+    const offsetWithinWrapper = currentWordRect.top - wrapperRect.top;
+    const targetTop = Math.max(contentWrapper.scrollTop + offsetWithinWrapper - 2, 0);
+    contentWrapper.scrollTo({ top: targetTop });
+  }
+
+  function showCurrentWord() {
+    if (!speedWords.length) return;
+    if (currentWordIndex >= speedWords.length) {
+      stopSpeedReading();
+      return;
+    }
+
+    speedWords.forEach((word) => word.classList.remove("reader-speed-current"));
+    const currentWord = speedWords[currentWordIndex];
+    currentWord.classList.add("reader-speed-current");
+    scrollCurrentWordToTop(currentWord);
+    currentWordIndex += 1;
+  }
+
+  function getWordsPerMinute() {
+    const parsed = Number.parseInt(wpmInput.value, 10);
+    if (Number.isNaN(parsed)) return 250;
+    return Math.min(Math.max(parsed, 60), 1200);
+  }
+
+  function prepareSpeedReadingWords() {
+    if (speedWords.length > 0) return;
+
+    const walker = document.createTreeWalker(contentElement, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (!node.parentElement) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (node.parentElement.closest("script, style, noscript")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    const textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+
+    textNodes.forEach((textNode) => {
+      const value = textNode.nodeValue;
+      if (!value) return;
+
+      const parts = value.match(/(\s+|[^\s]+)/g);
+      if (!parts || parts.length === 0) return;
+
+      const fragment = document.createDocumentFragment();
+      parts.forEach((part) => {
+        if (/^\s+$/.test(part)) {
+          fragment.appendChild(document.createTextNode(part));
+        } else {
+          const wordSpan = document.createElement("span");
+          wordSpan.className = "reader-speed-word";
+          wordSpan.textContent = part;
+          speedWords.push(wordSpan);
+          fragment.appendChild(wordSpan);
+        }
+      });
+
+      textNode.replaceWith(fragment);
+    });
+  }
+
+  function startSpeedReading() {
+    prepareSpeedReadingWords();
+    if (!speedWords.length) return;
+
+    stopSpeedReading();
+    speedReadingEnabled = true;
+    currentWordIndex = 0;
+    contentElement.classList.add("reader-speed-reading-active");
+    speedToggleBtn.textContent = "Speed Read: On";
+    speedToggleBtn.setAttribute("aria-pressed", "true");
+
+    const wpm = getWordsPerMinute();
+    const intervalMs = Math.max(Math.round(60000 / wpm), 30);
+
+    showCurrentWord();
+    speedTimer = setInterval(showCurrentWord, intervalMs);
+  }
+
+  function toggleSpeedReading() {
+    if (speedReadingEnabled) {
+      stopSpeedReading();
+      return;
+    }
+    startSpeedReading();
+  }
+
   updateFontSize();
 
   // Theme buttons
@@ -417,8 +587,15 @@
     });
   });
 
+  speedToggleBtn.addEventListener("click", toggleSpeedReading);
+  wpmInput.addEventListener("change", () => {
+    if (!speedReadingEnabled) return;
+    startSpeedReading();
+  });
+
   // Close button
   overlay.querySelector(".reader-close-btn").addEventListener("click", () => {
+    stopSpeedReading();
     overlay.remove();
     document.documentElement.style.overflow = "";
   });
